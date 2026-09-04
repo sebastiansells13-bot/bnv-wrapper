@@ -5,6 +5,30 @@ window (via WKWebView), so it behaves like a real app.
 
 It does NOT bundle any of the BNV app's code — it always loads the live
 site, so it's automatically up to date with whatever's deployed on Vercel.
+(The *wrapper itself* — the native shell around that web view — has its own
+separate version; see "Download" and "Updating" below.)
+
+## Download
+
+Grab the latest built app from GitHub Releases — this link always points
+at whatever was published most recently, so it's safe to share once and
+reuse:
+
+**https://github.com/sebastiansells13-bot/bnv-wrapper/releases/latest/download/BNV.app.zip**
+
+Unzip it and drag `BNV.app` to `/Applications`. It's ad-hoc signed (not
+notarized), so on first launch you'll need to right-click → Open (or
+allow it in System Settings → Privacy & Security) to get past Gatekeeper.
+
+Pushing commits to this repo does **not** change what that link downloads —
+it only updates when a new GitHub Release is published.
+
+## Updating
+
+The app checks GitHub Releases for a newer version once a day on launch,
+and you can trigger it manually any time via the **BNV → Check for
+Updates…** menu item. If a newer version is available it offers to open
+the release page — it never downloads or installs anything automatically.
 
 ## Features
 

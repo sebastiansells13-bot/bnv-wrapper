@@ -67,6 +67,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         NSApp.activate(ignoringOtherApps: true)
         setupMenu()
+        UpdateChecker.checkOnLaunchIfNeeded()
     }
 
     @objc func backingPropertiesChanged(_ note: Notification) {
@@ -83,6 +84,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenuItem = NSMenuItem()
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(NSMenuItem(title: "Quit BNV", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appMenuItem.submenu = appMenu
 
@@ -133,6 +136,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func zoomIn() { webView.pageZoom = min(3.0, webView.pageZoom + 0.1) }
     @objc func zoomOut() { webView.pageZoom = max(0.3, webView.pageZoom - 0.1) }
     @objc func zoomReset() { webView.pageZoom = 1.0 }
+    @objc func checkForUpdates() { UpdateChecker.checkManually() }
 }
 
 // MARK: - Navigation + downloads
@@ -265,5 +269,112 @@ class PopupWindowController: NSObject, WKNavigationDelegate, NSWindowDelegate {
     // its WKWebView) would stay strongly referenced in owner.popups forever.
     func windowWillClose(_ notification: Notification) {
         owner?.popups.removeAll { $0 === self }
+    }
+}
+
+// MARK: - Update checking
+//
+// This app isn't bundled through the App Store or a full update framework
+// (Sparkle etc.) — it's distributed as a zipped .app attached to GitHub
+// Releases. This just checks that repo's "latest release" tag against the
+// version baked into Info.plist and, if newer, offers to open the release
+// page so the user can grab it manually. It never downloads or installs
+// anything on its own.
+enum UpdateChecker {
+    // owner/repo on GitHub. Update if this repo is ever renamed/moved.
+    static let repo = "sebastiansells13-bot/bnv-wrapper"
+
+    private static let lastCheckDefaultsKey = "BNVLastUpdateCheck"
+    private static let autoCheckInterval: TimeInterval = 24 * 60 * 60 // once a day at most
+
+    static var currentVersion: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.0.0"
+    }
+
+    /// Silent background check used on launch: only speaks up if there's
+    /// actually something newer, and skips entirely if we already checked
+    /// recently.
+    static func checkOnLaunchIfNeeded() {
+        let defaults = UserDefaults.standard
+        if let last = defaults.object(forKey: lastCheckDefaultsKey) as? Date,
+           Date().timeIntervalSince(last) < autoCheckInterval {
+            return
+        }
+        defaults.set(Date(), forKey: lastCheckDefaultsKey)
+        check(announceIfUpToDate: false)
+    }
+
+    /// User explicitly chose "Check for Updates…" — always report back,
+    /// including "you're already up to date".
+    static func checkManually() {
+        check(announceIfUpToDate: true)
+    }
+
+    private static func check(announceIfUpToDate: Bool) {
+        let url = URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                guard error == nil,
+                      let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let tag = json["tag_name"] as? String,
+                      let releaseURLString = json["html_url"] as? String else {
+                    if announceIfUpToDate {
+                        presentAlert(title: "Couldn't Check for Updates",
+                                     message: "Couldn't reach GitHub to check for a new version. Check your internet connection and try again.",
+                                     downloadURL: nil)
+                    }
+                    return
+                }
+
+                if isVersion(tag, newerThan: currentVersion) {
+                    presentAlert(title: "Update Available",
+                                 message: "BNV \(tag) is available — you have \(currentVersion).",
+                                 downloadURL: URL(string: releaseURLString))
+                } else if announceIfUpToDate {
+                    presentAlert(title: "You're Up to Date",
+                                 message: "BNV \(currentVersion) is the latest version.",
+                                 downloadURL: nil)
+                }
+            }
+        }.resume()
+    }
+
+    // Compares two dotted version strings numerically component-by-component
+    // (so "1.10.0" > "1.9.0", unlike a plain string compare). A leading "v"
+    // (as in the GitHub tag "v1.2.0") is stripped first.
+    private static func isVersion(_ remote: String, newerThan local: String) -> Bool {
+        func parts(_ s: String) -> [Int] {
+            s.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+                .split(separator: ".")
+                .map { Int($0) ?? 0 }
+        }
+        let r = parts(remote), l = parts(local)
+        for i in 0..<max(r.count, l.count) {
+            let rv = i < r.count ? r[i] : 0
+            let lv = i < l.count ? l[i] : 0
+            if rv != lv { return rv > lv }
+        }
+        return false
+    }
+
+    private static func presentAlert(title: String, message: String, downloadURL: URL?) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        if let downloadURL = downloadURL {
+            alert.addButton(withTitle: "Download")
+            alert.addButton(withTitle: "Later")
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(downloadURL)
+            }
+        } else {
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
     }
 }
