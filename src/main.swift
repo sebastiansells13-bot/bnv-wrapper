@@ -147,7 +147,10 @@ extension AppDelegate: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-        if navigationResponse.canShowMIMEType {
+        // Only turn undisplayable responses into a native download for main-frame
+        // navigations. A subframe (e.g. a hidden iframe fetching JSON) hitting a
+        // MIME type WebKit can't render shouldn't pop a Save panel in the user's face.
+        if navigationResponse.canShowMIMEType || !navigationResponse.isForMainFrame {
             decisionHandler(.allow)
         } else {
             decisionHandler(.download)
@@ -194,9 +197,9 @@ extension AppDelegate: WKUIDelegate {
     }
 
     func webViewDidClose(_ webView: WKWebView) {
+        // windowWillClose (NSWindowDelegate) removes the controller from `popups`.
         if let popup = popups.first(where: { $0.webView === webView }) {
             popup.window.close()
-            popups.removeAll { $0 === popup }
         }
     }
 
@@ -208,7 +211,7 @@ extension AppDelegate: WKUIDelegate {
 
 // A lightweight window that hosts a popped-out WKWebView (new tabs, OAuth sign-in flows).
 // Auto-closes and refreshes the main window once navigation lands back on the BNV domain.
-class PopupWindowController: NSObject, WKNavigationDelegate {
+class PopupWindowController: NSObject, WKNavigationDelegate, NSWindowDelegate {
     let window: NSWindow
     let webView: WKWebView
     weak var owner: AppDelegate?
@@ -228,6 +231,7 @@ class PopupWindowController: NSObject, WKNavigationDelegate {
         window.title = "BNV"
         window.contentView = webView
         window.isReleasedWhenClosed = false
+        window.delegate = self
         window.tabbingIdentifier = "BNVTabGroup"
         window.center()
 
@@ -254,6 +258,12 @@ class PopupWindowController: NSObject, WKNavigationDelegate {
         guard hasLeftMainDomain else { return }
         owner?.webView.reload()
         window.close()
+    }
+
+    // Covers the case where the user closes the popup by hand (titlebar button)
+    // instead of the OAuth flow completing — without this, the controller (and
+    // its WKWebView) would stay strongly referenced in owner.popups forever.
+    func windowWillClose(_ notification: Notification) {
         owner?.popups.removeAll { $0 === self }
     }
 }
